@@ -43,8 +43,17 @@ bool AP_RangeFinder_Benewake_CAN::handle_frame(AP_HAL::CANFrame &frame)
         return false;
     }
 
+    /*
     const uint16_t dist_cm = le16toh_ptr(&frame.data[0]);
     const uint16_t snr = le16toh_ptr(&frame.data[2]);
+    */
+    /*
+    The following modification works with the Jiyi (Terrain follow & Obstacle) radars.
+    If ever needs to check with the actual benewake radars, this may require filtering
+    of data based on the IDs (Receive IDs) (frame.id).
+    */
+    const uint16_t dist_cm = frame.data[4] * 0x100U + frame.data[5];
+    const uint16_t snr = le16toh_ptr(&frame.data[6]);
     if (snr_min != 0 && snr < uint16_t(snr_min.get())) {
         // too low signal strength
         return true;
