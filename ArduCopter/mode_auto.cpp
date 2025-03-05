@@ -1013,6 +1013,24 @@ void ModeAuto::wp_run()
     // run waypoint controller
     copter.failsafe_terrain_set_status(wp_nav->update_wpnav());
 
+	if(copter.g2.auto_man_alt == 1)
+	{
+    	if(!copter.failsafe.radio)
+		{
+			float target_climb_rate = 0.0f;
+
+	        // get pilot desired climb rate
+	        target_climb_rate = get_pilot_desired_climb_rate(channel_throttle->get_control_in());
+	        target_climb_rate = constrain_float(target_climb_rate, -get_pilot_speed_dn(), g.pilot_speed_up);
+
+	        // get avoidance adjusted climb rate
+	        target_climb_rate = get_avoidance_adjusted_climbrate(target_climb_rate);
+
+	        // Send the commanded climb rate to the position controller
+	        pos_control->set_pos_target_z_from_climb_rate_cm(target_climb_rate);
+    	}
+	}
+
     // WP_Nav has set the vertical position control targets
     // run the vertical position controller and set output throttle
     pos_control->update_z_controller();

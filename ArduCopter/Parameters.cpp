@@ -1249,6 +1249,15 @@ const AP_Param::GroupInfo ParametersG2::var_info2[] = {
     // @User: Advanced
     AP_GROUPINFO("FS_EKF_FILT", 8, ParametersG2, fs_ekf_filt_hz, FS_EKF_FILT_DEFAULT),
 
+#if MODE_AUTO_ENABLED == ENABLED
+	// @Param: AUTO_MAN_ALT
+	// @DisplayName: Auto mode manual altitude control
+	// @Description: This Behavior is based on the Auto and Alt_hold flight modes, which allows manual altitude control.While entering the height control the aircraft stops.it re starts the forward advance by giving it pitch input and continuing with the flight plan.
+	// @Values: 0:Disabled,1:Enabled
+	// @User: Advanced
+	AP_GROUPINFO("AUTO_MAN_ALT", 9, ParametersG2, auto_man_alt, 0),
+#endif
+
     // ID 62 is reserved for the AP_SUBGROUPEXTENSION
 
     AP_GROUPEND

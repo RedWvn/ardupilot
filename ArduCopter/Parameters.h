@@ -693,6 +693,10 @@ public:
     // EKF variance filter cutoff
     AP_Float fs_ekf_filt_hz;
 
+#if MODE_AUTO_ENABLED == ENABLED
+    AP_Int8 auto_man_alt;
+#endif
+
 #if WEATHERVANE_ENABLED == ENABLED
     AC_WeatherVane weathervane;
 #endif
