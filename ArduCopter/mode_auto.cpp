@@ -1033,6 +1033,10 @@ void ModeAuto::wp_run()
 
 			if(temp_count == 200)
 				gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In radio failsafe condition check");
+
+			// set vertical speed and acceleration limits
+			pos_control->set_max_speed_accel_z(-get_pilot_speed_dn(), g.pilot_speed_up, g.pilot_accel_z);
+
 	        // get pilot desired climb rate
 	        target_climb_rate = get_pilot_desired_climb_rate(channel_throttle->get_control_in());
 	        target_climb_rate = constrain_float(target_climb_rate, -get_pilot_speed_dn(), g.pilot_speed_up);
