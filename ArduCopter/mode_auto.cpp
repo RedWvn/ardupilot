@@ -82,6 +82,7 @@ void ModeAuto::exit()
 
 // auto_run - runs the auto controller
 //      should be called at 100hz or more
+int temp_count = 0;
 void ModeAuto::run()
 {
     // start or update mission
@@ -112,6 +113,10 @@ void ModeAuto::run()
 
         mission.update();
     }
+
+	if(temp_count == 200)
+		gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: _mode is %d", (int)_mode);
+
 
     // call the correct auto controller
     switch (_mode) {
@@ -171,6 +176,8 @@ void ModeAuto::run()
         copter.logger.Write_Mode((uint8_t)copter.flightmode->mode_number(), ModeReason::AUTO_RTL_EXIT);
 #endif
     }
+
+	temp_count = temp_count == 200 ? 0 : temp_count + 1;
 }
 
 // return true if a position estimate is required
@@ -1013,12 +1020,19 @@ void ModeAuto::wp_run()
     // run waypoint controller
     copter.failsafe_terrain_set_status(wp_nav->update_wpnav());
 
+	if(temp_count == 200)
+		gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In wp_run");
+
 	if(copter.g2.auto_man_alt == 1)
 	{
+		if(temp_count == 200)
+			gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In auto_man_alt condition check");
     	if(!copter.failsafe.radio)
 		{
 			float target_climb_rate = 0.0f;
 
+			if(temp_count == 200)
+				gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In radio failsafe condition check");
 	        // get pilot desired climb rate
 	        target_climb_rate = get_pilot_desired_climb_rate(channel_throttle->get_control_in());
 	        target_climb_rate = constrain_float(target_climb_rate, -get_pilot_speed_dn(), g.pilot_speed_up);
@@ -1028,6 +1042,8 @@ void ModeAuto::wp_run()
 
 	        // Send the commanded climb rate to the position controller
 	        pos_control->set_pos_target_z_from_climb_rate_cm(target_climb_rate);
+			if(temp_count == 200)
+				gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: Setting climb rate to %f", target_climb_rate);
     	}
 	}
 
@@ -1035,7 +1051,10 @@ void ModeAuto::wp_run()
     // run the vertical position controller and set output throttle
     pos_control->update_z_controller();
 
-    // call attitude controller with auto yaw
+	if(temp_count == 200)
+		gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: Z controller updated");
+
+	// call attitude controller with auto yaw
     attitude_control->input_thrust_vector_heading(pos_control->get_thrust_vector(), auto_yaw.get_heading());
 }
 
