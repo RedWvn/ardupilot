@@ -1041,6 +1041,9 @@ void ModeAuto::wp_run()
 	        target_climb_rate = get_pilot_desired_climb_rate(channel_throttle->get_control_in());
 	        target_climb_rate = constrain_float(target_climb_rate, -get_pilot_speed_dn(), g.pilot_speed_up);
 
+			// set motors to full range
+			motors->set_desired_spool_state(AP_Motors::DesiredSpoolState::THROTTLE_UNLIMITED);
+
 	        // get avoidance adjusted climb rate
 	        target_climb_rate = get_avoidance_adjusted_climbrate(target_climb_rate);
 
