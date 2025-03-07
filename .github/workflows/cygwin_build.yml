@@ -5,6 +5,9 @@ on:
     paths-ignore:
       # remove other vehicles
       - 'AntennaTracker/**'
+      - 'ArduSub/**'
+      - 'ArduRover/**'
+      - 'ArduHeli/**'
       - 'Blimp/**'
       # remove non SITL HAL
       - 'libraries/AP_HAL_ChibiOS/**'
