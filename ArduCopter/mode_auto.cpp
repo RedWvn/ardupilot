@@ -114,8 +114,8 @@ void ModeAuto::run()
         mission.update();
     }
 
-	if(temp_count == 200)
-		gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: _mode is %d", (int)_mode);
+	//if(temp_count == 200)
+		//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: _mode is %d", (int)_mode);
 
 
     // call the correct auto controller
@@ -1020,19 +1020,19 @@ void ModeAuto::wp_run()
     // run waypoint controller
     copter.failsafe_terrain_set_status(wp_nav->update_wpnav());
 
-	if(temp_count == 200)
-		gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In wp_run");
+	//if(temp_count == 200)
+		//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In wp_run");
 
 	if(copter.g2.auto_man_alt == 1)
 	{
-		if(temp_count == 200)
-			gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In auto_man_alt condition check");
+		//if(temp_count == 200)
+			//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In auto_man_alt condition check");
     	if(!copter.failsafe.radio)
 		{
 			float target_climb_rate = 0.0f;
 
-			if(temp_count == 200)
-				gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In radio failsafe condition check");
+			//if(temp_count == 200)
+				//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In radio failsafe condition check");
 
 			// set vertical speed and acceleration limits
 			//pos_control->set_max_speed_accel_z(-get_pilot_speed_dn(), g.pilot_speed_up, g.pilot_accel_z);
@@ -1046,10 +1046,15 @@ void ModeAuto::wp_run()
 			//pos_control->set_pos_offset_target_z_cm(rf_state.terrain_offset_cm);
 			//pos_control->update_pos_offset_z();
 
-			float zero = 0.0;
-			float ht_cm = 10;
-			pos_control->input_pos_vel_accel_z(ht_cm, zero, 0);
+			//float zero = 0.0;
+			//float ht_cm = 100;
+			//pos_control->input_pos_vel_accel_z(ht_cm, zero, 0);
+			pos_control->update_pos_offset_z(50);
 
+			// initialise the vertical position controller
+			if (!pos_control->is_active_z()) {
+				pos_control->init_z_controller();
+			}
 
 			// set motors to full range
 			motors->set_desired_spool_state(AP_Motors::DesiredSpoolState::THROTTLE_UNLIMITED);
@@ -1057,10 +1062,13 @@ void ModeAuto::wp_run()
 	        // get avoidance adjusted climb rate
 	        target_climb_rate = get_avoidance_adjusted_climbrate(target_climb_rate);
 
+			// update the vertical offset based on the surface measurement
+			copter.surface_tracking.update_surface_offset();
+
 	        // Send the commanded climb rate to the position controller
 	        pos_control->set_pos_target_z_from_climb_rate_cm(target_climb_rate);
-			if(temp_count == 200)
-				gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: Setting climb rate to %f", target_climb_rate);
+			//if(temp_count == 200)
+				//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: Setting climb rate to %f", target_climb_rate);
     	}
 	}
 
@@ -1068,8 +1076,8 @@ void ModeAuto::wp_run()
     // run the vertical position controller and set output throttle
     pos_control->update_z_controller();
 
-	if(temp_count == 200)
-		gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: Z controller updated");
+	//if(temp_count == 200)
+		//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: Z controller updated");
 
 	// call attitude controller with auto yaw
     attitude_control->input_thrust_vector_heading(pos_control->get_thrust_vector(), auto_yaw.get_heading());
