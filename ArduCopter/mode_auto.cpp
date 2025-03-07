@@ -1035,11 +1035,21 @@ void ModeAuto::wp_run()
 				gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In radio failsafe condition check");
 
 			// set vertical speed and acceleration limits
-			pos_control->set_max_speed_accel_z(-get_pilot_speed_dn(), g.pilot_speed_up, g.pilot_accel_z);
+			//pos_control->set_max_speed_accel_z(-get_pilot_speed_dn(), g.pilot_speed_up, g.pilot_accel_z);
 
 	        // get pilot desired climb rate
 	        target_climb_rate = get_pilot_desired_climb_rate(channel_throttle->get_control_in());
 	        target_climb_rate = constrain_float(target_climb_rate, -get_pilot_speed_dn(), g.pilot_speed_up);
+
+
+			//pos_control->set_vel_desired_z_cms(-get_pilot_speed_dn(), g.pilot_speed_up);
+			//pos_control->set_pos_offset_target_z_cm(rf_state.terrain_offset_cm);
+			//pos_control->update_pos_offset_z();
+
+			float zero = 0.0;
+			float ht_cm = 10;
+			pos_control->input_pos_vel_accel_z(ht_cm, zero, 0);
+
 
 			// set motors to full range
 			motors->set_desired_spool_state(AP_Motors::DesiredSpoolState::THROTTLE_UNLIMITED);
