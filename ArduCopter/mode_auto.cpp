@@ -1049,7 +1049,7 @@ void ModeAuto::wp_run()
 			//float zero = 0.0;
 			//float ht_cm = 100;
 			//pos_control->input_pos_vel_accel_z(ht_cm, zero, 0);
-			pos_control->update_pos_offset_z(50);
+			//pos_control->update_pos_offset_z(50);
 
 			// initialise the vertical position controller
 			if (!pos_control->is_active_z()) {
@@ -1057,13 +1057,21 @@ void ModeAuto::wp_run()
 			}
 
 			// set motors to full range
-			motors->set_desired_spool_state(AP_Motors::DesiredSpoolState::THROTTLE_UNLIMITED);
+			//motors->set_desired_spool_state(AP_Motors::DesiredSpoolState::THROTTLE_UNLIMITED);
 
 	        // get avoidance adjusted climb rate
 	        target_climb_rate = get_avoidance_adjusted_climbrate(target_climb_rate);
 
 			// update the vertical offset based on the surface measurement
 			copter.surface_tracking.update_surface_offset();
+
+			// limit and scale lean angles
+			const float angle_limit_cd = MAX(1000.0f, MIN(copter.aparm.angle_max, attitude_control->get_althold_lean_angle_max_cd()));
+			Vector2f target_rp_cd(nav_attitude_time.roll_deg * 100, nav_attitude_time.pitch_deg * 100);
+			target_rp_cd.limit_length(angle_limit_cd);
+			
+			// send targets to attitude controller
+			attitude_control->input_euler_angle_roll_pitch_yaw(target_rp_cd.x, target_rp_cd.y, nav_attitude_time.yaw_deg * 100, true);
 
 	        // Send the commanded climb rate to the position controller
 	        pos_control->set_pos_target_z_from_climb_rate_cm(target_climb_rate);
