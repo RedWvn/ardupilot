@@ -1034,6 +1034,14 @@ void ModeAuto::wp_run()
 			//if(temp_count == 200)
 				//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In radio failsafe condition check");
 
+			static int init_control = 0;
+			if(init_control == 0)
+			{
+				init_control = 1;
+				// set vertical speed and acceleration limits
+				pos_control->set_max_speed_accel_z(-get_pilot_speed_dn(), g.pilot_speed_up, g.pilot_accel_z);
+				pos_control->set_correction_speed_accel_z(-get_pilot_speed_dn(), g.pilot_speed_up, g.pilot_accel_z);
+			}
 			// set vertical speed and acceleration limits
 			//pos_control->set_max_speed_accel_z(-get_pilot_speed_dn(), g.pilot_speed_up, g.pilot_accel_z);
 
@@ -1045,7 +1053,6 @@ void ModeAuto::wp_run()
 			float target_climb_rate = copter.get_pilot_desired_climb_rate(copter.channel_throttle->get_control_in());
 	        target_climb_rate = constrain_float(target_climb_rate, -get_pilot_speed_dn(), g.pilot_speed_up);
 
-			//pos_control->set_vel_desired_z_cms(-get_pilot_speed_dn(), g.pilot_speed_up);
 			//pos_control->set_pos_offset_target_z_cm(rf_state.terrain_offset_cm);
 			//pos_control->update_pos_offset_z();
 
@@ -1070,6 +1077,9 @@ void ModeAuto::wp_run()
 			
 			// send targets to attitude controller
 			//attitude_control->input_euler_angle_roll_pitch_yaw(target_rp_cd.x, target_rp_cd.y, nav_attitude_time.yaw_deg * 100, true);
+
+			pos_control->set_vel_desired_z_cms(target_climb_rate);
+			//pos_control->set_accel_desired_z_cmss(g.pilot_accel_z);
 
 	        // Send the commanded climb rate to the position controller
 	        pos_control->set_pos_target_z_from_climb_rate_cm(target_climb_rate);
