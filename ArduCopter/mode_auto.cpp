@@ -1034,7 +1034,7 @@ void ModeAuto::wp_run()
 			//if(temp_count == 200)
 				//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In radio failsafe condition check");
 
-			static int init_control = 0;
+			/*static int init_control = 0;
 			if(init_control == 0)
 			{
 				init_control = 1;
@@ -1046,7 +1046,7 @@ void ModeAuto::wp_run()
 			//pos_control->set_max_speed_accel_z(-get_pilot_speed_dn(), g.pilot_speed_up, g.pilot_accel_z);
 
 			// set motors to full range
-			motors->set_desired_spool_state(AP_Motors::DesiredSpoolState::THROTTLE_UNLIMITED);
+			motors->set_desired_spool_state(AP_Motors::DesiredSpoolState::THROTTLE_UNLIMITED);*/
 
 	        // get pilot desired climb rate
 	        //target_climb_rate = get_pilot_desired_climb_rate(channel_throttle->get_control_in());
