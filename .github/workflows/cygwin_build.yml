@@ -6,8 +6,8 @@ on:
       # remove other vehicles
       - 'AntennaTracker/**'
       - 'ArduSub/**'
-      - 'ArduRover/**'
-      - 'ArduHeli/**'
+      - 'Rover/**'
+      - 'Heli/**'
       - 'Blimp/**'
       # remove non SITL HAL
       - 'libraries/AP_HAL_ChibiOS/**'

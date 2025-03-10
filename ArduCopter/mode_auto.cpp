@@ -1062,15 +1062,17 @@ void ModeAuto::wp_run()
 			//attitude_control->input_euler_angle_roll_pitch_yaw(target_rp_cd.x, target_rp_cd.y, nav_attitude_time.yaw_deg * 100, true);
 
 			//pos_control->set_accel_desired_z_cmss(g.pilot_accel_z);
+			pos_control->set_vel_desired_z_cms(target_climb_rate);
+			pos_control->set_pos_target_z_cm(inertial_nav.get_position_z_up_cm());
 
 	        // Send the commanded climb rate to the position controller
 	        pos_control->set_pos_target_z_from_climb_rate_cm(target_climb_rate);
 
 			if(target_climb_rate > 0)
 			{
-				pos_control->set_vel_desired_z_cms(target_climb_rate);
-				float target = pos_control->get_pos_target_z_cm() + target_climb_rate * pos_control->get_dt();
-				pos_control->set_pos_target_z_cm(target);
+				gcs().send_text(MAV_SEVERITY_CRITICAL, "target climb rate: %f", target_climb_rate);
+				//float target = pos_control->get_pos_target_z_cm() + target_climb_rate * pos_control->get_dt();
+				//pos_control->set_pos_target_z_cm(target);
 			}
     	}
 	}
