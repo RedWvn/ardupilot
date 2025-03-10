@@ -869,14 +869,6 @@ void AC_PosControl::set_pos_target_z_from_climb_rate_cm(float vel)
     _pos_target.z += _pos_offset_z;
     _vel_desired.z += _vel_offset_z;
     _accel_desired.z += _accel_offset_z;
-
-extern int temp_count;
-	if(temp_count == 200)
-	{
-		gcs().send_text(MAV_SEVERITY_INFO, "Po: %f, Vo: %f, Ao: %f", _pos_offset_z, _vel_offset_z, _accel_offset_z);
-		gcs().send_text(MAV_SEVERITY_INFO, "Pt: %f, Vt: %f, At: %f", _pos_target.z, _vel_target.z, _accel_target.z);
-		gcs().send_text(MAV_SEVERITY_INFO, "Vd: %f, Ad: %f", _vel_desired.z, _accel_desired.z);
-	}
 }
 
 /// land_at_climb_rate_cm - adjusts target up or down using a commanded climb rate in cm/s

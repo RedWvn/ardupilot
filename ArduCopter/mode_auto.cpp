@@ -82,7 +82,6 @@ void ModeAuto::exit()
 
 // auto_run - runs the auto controller
 //      should be called at 100hz or more
-int temp_count = 0;
 void ModeAuto::run()
 {
     // start or update mission
@@ -113,10 +112,6 @@ void ModeAuto::run()
 
         mission.update();
     }
-
-	//if(temp_count == 200)
-		//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: _mode is %d", (int)_mode);
-
 
     // call the correct auto controller
     switch (_mode) {
@@ -176,8 +171,6 @@ void ModeAuto::run()
         copter.logger.Write_Mode((uint8_t)copter.flightmode->mode_number(), ModeReason::AUTO_RTL_EXIT);
 #endif
     }
-
-	temp_count = temp_count == 200 ? 0 : temp_count + 1;
 }
 
 // return true if a position estimate is required
@@ -1020,20 +1013,10 @@ void ModeAuto::wp_run()
     // run waypoint controller
     copter.failsafe_terrain_set_status(wp_nav->update_wpnav());
 
-	//if(temp_count == 200)
-		//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In wp_run");
-
 	if(copter.g2.auto_man_alt == 1)
 	{
-		//if(temp_count == 200)
-			//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In auto_man_alt condition check");
     	if(!copter.failsafe.radio)
 		{
-			//float target_climb_rate = 0.0f;
-
-			//if(temp_count == 200)
-				//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: In radio failsafe condition check");
-
 			/*static int init_control = 0;
 			if(init_control == 0)
 			{
@@ -1078,24 +1061,23 @@ void ModeAuto::wp_run()
 			// send targets to attitude controller
 			//attitude_control->input_euler_angle_roll_pitch_yaw(target_rp_cd.x, target_rp_cd.y, nav_attitude_time.yaw_deg * 100, true);
 
-			pos_control->set_vel_desired_z_cms(target_climb_rate);
 			//pos_control->set_accel_desired_z_cmss(g.pilot_accel_z);
 
 	        // Send the commanded climb rate to the position controller
 	        pos_control->set_pos_target_z_from_climb_rate_cm(target_climb_rate);
 
-
-			//if(temp_count == 200)
-				//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: Setting climb rate to %f", target_climb_rate);
+			if(target_climb_rate > 0)
+			{
+				pos_control->set_vel_desired_z_cms(target_climb_rate);
+				float target = pos_control->get_pos_target_z_cm() + target_climb_rate * pos_control->get_dt();
+				pos_control->set_pos_target_z_cm(target);
+			}
     	}
 	}
 
     // WP_Nav has set the vertical position control targets
     // run the vertical position controller and set output throttle
     pos_control->update_z_controller();
-
-	//if(temp_count == 200)
-		//gcs().send_text(MAV_SEVERITY_INFO, "AUTO_MAN_ALT: Z controller updated");
 
 	// call attitude controller with auto yaw
     attitude_control->input_thrust_vector_heading(pos_control->get_thrust_vector(), auto_yaw.get_heading());

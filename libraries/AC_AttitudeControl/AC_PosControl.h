@@ -302,10 +302,6 @@ public:
     // set_accel_desired_xy_cmss set desired acceleration in cm/s in xy axis
     void set_accel_desired_xy_cmss(const Vector2f &accel_cms) { _accel_desired.xy() = accel_cms; }
 
-    // set_accel_desired_xy_cmss set desired acceleration in cm/s in xy axis
-    void set_accel_desired_z_cmss(const float &accel_cms) { _accel_desired.z = accel_cms; }
-
-
     // get_accel_target_cmss - returns the target acceleration in NEU cm/s/s
     const Vector3f& get_accel_target_cmss() const { return _accel_target; }
 
