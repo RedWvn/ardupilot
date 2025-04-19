@@ -734,6 +734,14 @@ bool AP_InertialSensor::register_gyro(uint8_t &instance, uint16_t raw_sample_rat
         return false;
     }
 
+    // Loop over the existing instances and check if the instance already exists
+    for (uint8_t instance_to_check = 0; instance_to_check < _gyro_count; instance_to_check++) {
+        if ((uint32_t)_gyro_id(instance_to_check) == id) {
+            // if it does, then bail
+            return false;
+        }
+    }
+
     _gyro_raw_sample_rates[_gyro_count] = raw_sample_rate_hz;
     _gyro_over_sampling[_gyro_count] = 1;
     _gyro_raw_sampling_multiplier[_gyro_count] = INT16_MAX/radians(2000);
@@ -792,6 +800,14 @@ bool AP_InertialSensor::register_accel(uint8_t &instance, uint16_t raw_sample_ra
     if (_accel_count == INS_MAX_INSTANCES) {
         GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Failed to register accel id %u", unsigned(id));
         return false;
+    }
+
+    // Loop over the existing instances and check if the instance already exists
+    for (uint8_t instance_to_check = 0; instance_to_check < _accel_count; instance_to_check++) {
+        if ((uint32_t)_accel_id(instance_to_check) == id) {
+            // if it does, then bail
+            return false;
+        }
     }
 
     _accel_raw_sample_rates[_accel_count] = raw_sample_rate_hz;
@@ -1043,8 +1059,10 @@ AP_InertialSensor::init(uint16_t loop_rate)
                     notch.filter[i].allocate_filters(notch.num_dynamic_notches,
                                                      notch.params.harmonics(), double_notch ? 2 : triple_notch ? 3 : 1);
                     // initialise default settings, these will be subsequently changed in AP_InertialSensor_Backend::update_gyro()
-                    notch.filter[i].init(_gyro_raw_sample_rates[i], notch.calculated_notch_freq_hz[0],
-                                         notch.params.bandwidth_hz(), notch.params.attenuation_dB());
+                    notch.filter[i].init(_gyro_raw_sample_rates[i],
+                                         notch.params.center_freq_hz(),
+                                         notch.params.bandwidth_hz(),
+                                         notch.params.attenuation_dB());
                 }
             }
         }
@@ -1767,25 +1785,27 @@ void AP_InertialSensor::_save_gyro_calibration()
  */
 void AP_InertialSensor::HarmonicNotch::update_params(uint8_t instance, bool converging, float gyro_rate)
 {
-    const float center_freq = calculated_notch_freq_hz[0];
     if (!is_equal(last_bandwidth_hz[instance], params.bandwidth_hz()) ||
         !is_equal(last_attenuation_dB[instance], params.attenuation_dB()) ||
-        (params.tracking_mode() == HarmonicNotchDynamicMode::Fixed && !is_equal(last_center_freq_hz[instance], center_freq)) ||
+        !is_equal(last_center_freq_hz[instance], params.center_freq_hz()) ||
         converging) {
         filter[instance].init(gyro_rate,
-                              center_freq,
+                              params.center_freq_hz(),
                               params.bandwidth_hz(),
                               params.attenuation_dB());
-        last_center_freq_hz[instance] = center_freq;
+        last_center_freq_hz[instance] = params.center_freq_hz();
         last_bandwidth_hz[instance] = params.bandwidth_hz();
         last_attenuation_dB[instance] = params.attenuation_dB();
-    } else if (params.tracking_mode() != HarmonicNotchDynamicMode::Fixed) {
+    }
+    if (params.tracking_mode() != HarmonicNotchDynamicMode::Fixed) {
+        // we always call the update for non-fixed notches, even if we
+        // just called init() as the update may use a different
+        // frequency to the init
         if (num_calculated_notch_frequencies > 1) {
             filter[instance].update(num_calculated_notch_frequencies, calculated_notch_freq_hz);
         } else {
-            filter[instance].update(center_freq);
+            filter[instance].update(calculated_notch_freq_hz[0]);
         }
-        last_center_freq_hz[instance] = center_freq;
     }
 }
 
