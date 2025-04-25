@@ -61,6 +61,26 @@ void Copter::Log_Write_Control_Tuning()
         target_climb_rate   : target_climb_rate_cms,
         climb_rate          : int16_t(inertial_nav.get_velocity_z_up_cms()) // float -> int16_t
     };
+    
+    // Custom log message with consistent units
+    float speed_variable_in_cms = 25.2; // Get Z velocity in cm/s
+    uint16_t instance_variable = 0; // Instance number (could be sensor instance or counter)
+    float voltage_variable_in_volts = battery.voltage(); // Battery voltage in volts
+    float frequency_variable_in_hz = 1.2; // System loop rate in Hz
+
+    // Write the custom log message
+    AP::logger().Write(
+      "RWLG",                     // Log message name (4 chars max)
+      "Speed,Inst,Volt,Freq",  // Labels for fields (added TimeUS)
+      "n#vz",                     // Units: s=seconds, #=instance, v=volts, z=hertz
+      "20C0",                     // Multipliers (F=float)
+      "fHff",                    // Format: Q=uint64_t, f=float, H=uint16_t, f=float, f=float
+      speed_variable_in_cms,      // Speed in cm/s (float)
+      instance_variable,          // Instance (uint16_t)
+      voltage_variable_in_volts,  // Voltage in volts (float)
+      frequency_variable_in_hz    // Frequency in Hz (float)
+    );
+    
     logger.WriteBlock(&pkt, sizeof(pkt));
 }
 
