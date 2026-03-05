@@ -207,6 +207,8 @@ private:
     AP_Float                    _sensor_max_alt;     // PrecLand maximum height the sensor can detect target
     AP_Int16                    _options;            // Bitmask for extra options
     AP_Enum<Rotation>           _orient;             // Orientation of camera/sensor
+    AP_Int16                    _target_id;          // -1 = accept any
+    AP_Int16                    _target_id_bckp;     // -1 = accept any
 
     uint32_t                    _last_update_ms;    // system time in millisecond when update was last called
     bool                        _target_acquired;   // true if target has been seen recently after estimator is initialized
