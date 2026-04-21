@@ -538,6 +538,15 @@ const AP_Param::GroupInfo QuadPlane::var_info2[] = {
     // @User: Standard
     AP_GROUPINFO("BCK_PIT_LIM", 38, QuadPlane, q_bck_pitch_lim, 10.0f),
 
+    // @Param: TKOFF_YAW_THR
+    // @DisplayName: VTOL takeoff yaw alignment threshold
+    // @Description: Heading error threshold (degrees) that must be met before VTOL takeoff transitions to fixed-wing flight. The aircraft holds hover altitude and yaws toward the first mission waypoint bearing. Set 0 to disable (transition immediately on altitude reached, legacy behavior).
+    // @Units: deg
+    // @Range: 0 45
+    // @Increment: 1
+    // @User: Standard
+    AP_GROUPINFO("TKOFF_YAW_THR", 39, QuadPlane, tkoff_yaw_thr_deg, 0),
+
     AP_GROUPEND
 };
 
@@ -3233,9 +3242,19 @@ void QuadPlane::takeoff_controller(void)
     run_xy_controller();
 
     set_pilot_yaw_rate_time_constant();
-    attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(plane.nav_roll_cd,
-                                                                  plane.nav_pitch_cd,
-                                                                  get_pilot_input_yaw_rate_cds() + get_weathervane_yaw_rate_cds());
+    if (tkoff_yaw_align_active && tkoff_yaw_target_cd >= 0) {
+        // angle-mode yaw toward waypoint bearing; slew_yaw=true for smooth tracking
+        attitude_control->input_euler_angle_roll_pitch_yaw(
+            plane.nav_roll_cd,
+            plane.nav_pitch_cd,
+            tkoff_yaw_target_cd,
+            true);
+    } else {
+        attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(
+            plane.nav_roll_cd,
+            plane.nav_pitch_cd,
+            get_pilot_input_yaw_rate_cds() + get_weathervane_yaw_rate_cds());
+    }
 
     float vel_z = wp_nav->get_default_speed_up();
     if (plane.control_mode == &plane.mode_guided && guided_takeoff) {
@@ -3391,6 +3410,8 @@ bool QuadPlane::do_vtol_takeoff(const AP_Mission::Mission_Command& cmd)
         plane.next_WP_loc.alt = plane.current_loc.alt + cmd.content.location.alt;
     }
     throttle_wait = false;
+    tkoff_yaw_align_active = false;
+    tkoff_yaw_target_cd = -1;
 
     // set vertical speed and acceleration limits
     pos_control->set_max_speed_accel_z(-get_pilot_velocity_z_max_dn(), pilot_speed_z_max_up*100, pilot_accel_z*100);
@@ -3499,6 +3520,30 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
     if (plane.current_loc.alt < plane.next_WP_loc.alt) {
         return false;
     }
+
+    // --- YAW ALIGNMENT SUB-STATE ---
+    if (is_positive(tkoff_yaw_thr_deg)) {
+        if (!tkoff_yaw_align_active) {
+            // first tick after altitude reached: compute target bearing
+            AP_Mission::Mission_Command next_nav_cmd;
+            if (plane.mission.get_next_nav_cmd(plane.mission.get_current_nav_index() + 1, next_nav_cmd)) {
+                tkoff_yaw_target_cd = plane.current_loc.get_bearing_to(next_nav_cmd.content.location);
+            } else {
+                // no next waypoint — skip yaw align
+                tkoff_yaw_target_cd = -1;
+            }
+            tkoff_yaw_align_active = true;
+        }
+
+        if (tkoff_yaw_target_cd >= 0) {
+            const float yaw_error_deg = fabsf(wrap_180_cd(tkoff_yaw_target_cd - ahrs.yaw_sensor)) * 0.01f;
+            if (yaw_error_deg > tkoff_yaw_thr_deg) {
+                return false;   // stay in takeoff_controller() yaw loop
+            }
+        }
+    }
+    // --- END YAW ALIGNMENT ---
+
     transition->restart();
     plane.TECS_controller.set_pitch_max_limit(transition_pitch_max);
 

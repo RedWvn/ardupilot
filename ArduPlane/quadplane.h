@@ -625,6 +625,7 @@ private:
 
     AP_Float takeoff_failure_scalar;
     AP_Float maximum_takeoff_airspeed;
+    AP_Float tkoff_yaw_thr_deg;
     uint32_t takeoff_start_time_ms;
     uint32_t takeoff_time_limit_ms;
 
@@ -637,6 +638,8 @@ private:
     AP_Float takeoff_navalt_min;
     uint32_t takeoff_last_run_ms;
     float takeoff_start_alt;
+    int32_t tkoff_yaw_target_cd;
+    bool tkoff_yaw_align_active;
 
     // oneshot with duration ARMING_DELAY_MS used by quadplane to delay spoolup after arming:
     // ignored unless OPTION_DELAY_ARMING or OPTION_TILT_DISARMED is set
