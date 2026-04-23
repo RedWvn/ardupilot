@@ -538,15 +538,6 @@ const AP_Param::GroupInfo QuadPlane::var_info2[] = {
     // @User: Standard
     AP_GROUPINFO("BCK_PIT_LIM", 38, QuadPlane, q_bck_pitch_lim, 10.0f),
 
-    // @Param: TKOFF_YAW_THR
-    // @DisplayName: VTOL takeoff yaw alignment threshold
-    // @Description: Heading error threshold (degrees) that must be met before VTOL takeoff transitions to fixed-wing flight. The aircraft holds hover altitude and yaws toward the first mission waypoint bearing. Set 0 to disable (transition immediately on altitude reached, legacy behavior).
-    // @Units: deg
-    // @Range: 0 45
-    // @Increment: 1
-    // @User: Standard
-    AP_GROUPINFO("TKOFF_YAW_THR", 39, QuadPlane, tkoff_yaw_thr_deg, 0),
-
     AP_GROUPEND
 };
 
@@ -3522,24 +3513,22 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
     }
 
     // --- YAW ALIGNMENT SUB-STATE ---
-    if (is_positive(tkoff_yaw_thr_deg)) {
-        if (!tkoff_yaw_align_active) {
-            // first tick after altitude reached: compute target bearing
-            AP_Mission::Mission_Command next_nav_cmd;
-            if (plane.mission.get_next_nav_cmd(plane.mission.get_current_nav_index() + 1, next_nav_cmd)) {
-                tkoff_yaw_target_cd = plane.current_loc.get_bearing_to(next_nav_cmd.content.location);
-            } else {
-                // no next waypoint — skip yaw align
-                tkoff_yaw_target_cd = -1;
-            }
-            tkoff_yaw_align_active = true;
+    if (!tkoff_yaw_align_active) {
+        // first tick after altitude reached: compute target bearing
+        AP_Mission::Mission_Command next_nav_cmd;
+        if (plane.mission.get_next_nav_cmd(plane.mission.get_current_nav_index() + 1, next_nav_cmd)) {
+            tkoff_yaw_target_cd = plane.current_loc.get_bearing_to(next_nav_cmd.content.location);
+        } else {
+            // no next waypoint — skip yaw align
+            tkoff_yaw_target_cd = -1;
         }
+        tkoff_yaw_align_active = true;
+    }
 
-        if (tkoff_yaw_target_cd >= 0) {
-            const float yaw_error_deg = fabsf(wrap_180_cd(tkoff_yaw_target_cd - ahrs.yaw_sensor)) * 0.01f;
-            if (yaw_error_deg > tkoff_yaw_thr_deg) {
-                return false;   // stay in takeoff_controller() yaw loop
-            }
+    if (tkoff_yaw_target_cd >= 0) {
+        const float yaw_error_deg = fabsf(wrap_180_cd(tkoff_yaw_target_cd - ahrs.yaw_sensor)) * 0.01f;
+        if (yaw_error_deg > 5.0f) {
+            return false;   // stay in takeoff_controller() yaw loop
         }
     }
     // --- END YAW ALIGNMENT ---
