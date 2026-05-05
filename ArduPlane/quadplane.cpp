@@ -3516,10 +3516,10 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
     if (!tkoff_yaw_align_active) {
         // first tick after altitude reached: compute target bearing
         AP_Mission::Mission_Command next_nav_cmd;
-        if (plane.control_mode == &plane.mode_auto && ahrs.yaw_healthy() && plane.mission.get_next_nav_cmd(plane.mission.get_current_nav_index() + 1, next_nav_cmd)) {
+        if (plane.control_mode == &plane.mode_auto && ahrs.healthy() && plane.mission.get_next_nav_cmd(plane.mission.get_current_nav_index() + 1, next_nav_cmd)) {
             tkoff_yaw_target_cd = plane.current_loc.get_bearing_to(next_nav_cmd.content.location);
         } else {
-            // no next waypoint, unhealthy yaw, or not in AUTO mode — skip yaw align
+            // no next waypoint, unhealthy AHRS, or not in AUTO mode — skip yaw align
             tkoff_yaw_target_cd = -1;
         }
         tkoff_yaw_align_active = true;
