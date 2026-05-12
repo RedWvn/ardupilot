@@ -538,6 +538,31 @@ const AP_Param::GroupInfo QuadPlane::var_info2[] = {
     // @User: Standard
     AP_GROUPINFO("BCK_PIT_LIM", 38, QuadPlane, q_bck_pitch_lim, 10.0f),
 
+    // @Param: TKOFF_YAW_EN
+    // @DisplayName: Takeoff yaw alignment enable
+    // @Description: When enabled, the aircraft will yaw to align with the first mission waypoint bearing after reaching takeoff altitude, before initiating the VTOL-to-fixed-wing transition. Set to 0 to disable and transition immediately on altitude.
+    // @Values: 0:Disabled,1:Enabled
+    // @User: Standard
+    AP_GROUPINFO("TKOFF_YAW_EN", 39, QuadPlane, tkoff_yaw_enable, 1),
+
+    // @Param: TKOFF_YAW_RATE
+    // @DisplayName: Takeoff yaw alignment max rate
+    // @Description: Maximum yaw rate used while aligning to the first waypoint bearing during VTOL takeoff. Lower values reduce overshoot at the cost of slower alignment. A proportional controller scales the rate down as the aircraft approaches the target heading, so this is the rate at large errors.
+    // @Units: deg/s
+    // @Range: 5 90
+    // @Increment: 1
+    // @User: Standard
+    AP_GROUPINFO("TKOFF_YAW_RATE", 40, QuadPlane, tkoff_yaw_rate, 20.0f),
+
+    // @Param: TKOFF_YAW_DLY
+    // @DisplayName: Takeoff yaw alignment settle delay
+    // @Description: Time in seconds to hold position after yaw alignment is complete (error within 5 deg) before starting the transition to fixed-wing flight. This allows the yaw rate to damp out before transitioning.
+    // @Units: s
+    // @Range: 0 5
+    // @Increment: 0.1
+    // @User: Standard
+    AP_GROUPINFO("TKOFF_YAW_DLY", 41, QuadPlane, tkoff_yaw_delay, 1.5f),
+
     AP_GROUPEND
 };
 
@@ -3234,12 +3259,19 @@ void QuadPlane::takeoff_controller(void)
 
     set_pilot_yaw_rate_time_constant();
     if (tkoff_yaw_align_active && tkoff_yaw_target_cd >= 0) {
-        // angle-mode yaw toward waypoint bearing; slew_yaw=true for smooth tracking
-        attitude_control->input_euler_angle_roll_pitch_yaw(
+        // Proportional yaw-rate controller: rate scales with heading error and is
+        // capped at Q_TKOFF_YAW_RATE.  This naturally decelerates as the aircraft
+        // approaches the target and prevents the overshoot that occurs when an
+        // angle target is commanded directly.
+        const float yaw_error_cd  = wrap_180_cd(tkoff_yaw_target_cd - ahrs.yaw_sensor);
+        const float max_rate_cds  = tkoff_yaw_rate * 100.0f;            // deg/s → cd/s
+        // P gain of 1.0: error_cd maps 1:1 to cd/s, then clamped.
+        // e.g. 30 deg error → 30 deg/s (if within cap), 5 deg error → 5 deg/s.
+        const float yaw_rate_cds  = constrain_float(yaw_error_cd, -max_rate_cds, max_rate_cds);
+        attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(
             plane.nav_roll_cd,
             plane.nav_pitch_cd,
-            tkoff_yaw_target_cd,
-            true);
+            yaw_rate_cds);
     } else {
         attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(
             plane.nav_roll_cd,
@@ -3403,6 +3435,7 @@ bool QuadPlane::do_vtol_takeoff(const AP_Mission::Mission_Command& cmd)
     throttle_wait = false;
     tkoff_yaw_align_active = false;
     tkoff_yaw_target_cd = -1;
+    tkoff_yaw_settle_start_ms = 0;
 
     // set vertical speed and acceleration limits
     pos_control->set_max_speed_accel_z(-get_pilot_velocity_z_max_dn(), pilot_speed_z_max_up*100, pilot_accel_z*100);
@@ -3513,22 +3546,38 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
     }
 
     // --- YAW ALIGNMENT SUB-STATE ---
-    if (!tkoff_yaw_align_active) {
-        // first tick after altitude reached: compute target bearing
-        AP_Mission::Mission_Command next_nav_cmd;
-        if (plane.control_mode == &plane.mode_auto && ahrs.healthy() && plane.mission.get_next_nav_cmd(plane.mission.get_current_nav_index() + 1, next_nav_cmd)) {
-            tkoff_yaw_target_cd = plane.current_loc.get_bearing_to(next_nav_cmd.content.location);
-        } else {
-            // no next waypoint, unhealthy AHRS, or not in AUTO mode — skip yaw align
-            tkoff_yaw_target_cd = -1;
+    if (tkoff_yaw_enable > 0) {
+        if (!tkoff_yaw_align_active) {
+            // first tick after altitude reached: compute target bearing
+            AP_Mission::Mission_Command next_nav_cmd;
+            if (plane.control_mode == &plane.mode_auto && ahrs.healthy() && plane.mission.get_next_nav_cmd(plane.mission.get_current_nav_index() + 1, next_nav_cmd)) {
+                tkoff_yaw_target_cd = plane.current_loc.get_bearing_to(next_nav_cmd.content.location);
+            } else {
+                // no next waypoint, unhealthy AHRS, or not in AUTO mode — skip yaw align
+                tkoff_yaw_target_cd = -1;
+            }
+            tkoff_yaw_align_active = true;
         }
-        tkoff_yaw_align_active = true;
-    }
 
-    if (tkoff_yaw_target_cd >= 0) {
-        const float yaw_error_deg = fabsf(wrap_180_cd(tkoff_yaw_target_cd - ahrs.yaw_sensor)) * 0.01f;
-        if (yaw_error_deg > 5.0f) {
-            return false;   // stay in takeoff_controller() yaw loop
+        if (tkoff_yaw_target_cd >= 0) {
+            const float yaw_error_deg = fabsf(wrap_180_cd(tkoff_yaw_target_cd - ahrs.yaw_sensor)) * 0.01f;
+            if (yaw_error_deg > 5.0f) {
+                // still rotating toward target — reset settle timer so the full
+                // delay must elapse after we actually hit the tolerance band
+                tkoff_yaw_settle_start_ms = 0;
+                return false;
+            }
+
+            // Within tolerance: start or check the settle timer
+            if (tkoff_yaw_settle_start_ms == 0) {
+                tkoff_yaw_settle_start_ms = now;
+                gcs().send_text(MAV_SEVERITY_INFO, "Takeoff yaw aligned, settling %.1fs", (double)tkoff_yaw_delay);
+            }
+            const uint32_t settle_ms = (uint32_t)(tkoff_yaw_delay * 1000.0f);
+            if (now - tkoff_yaw_settle_start_ms < settle_ms) {
+                return false;   // hold hover until settled
+            }
+            // Settle complete — fall through to transition
         }
     }
     // --- END YAW ALIGNMENT ---
