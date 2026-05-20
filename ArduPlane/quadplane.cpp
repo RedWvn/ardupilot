@@ -3279,23 +3279,28 @@ void QuadPlane::takeoff_controller(void)
             get_pilot_input_yaw_rate_cds() + get_weathervane_yaw_rate_cds());
     }
 
-    float vel_z = wp_nav->get_default_speed_up();
-    if (plane.control_mode == &plane.mode_guided && guided_takeoff) {
-        // for guided takeoff we aim for a specific height with zero
-        // velocity at that height
-        Location origin;
-        if (ahrs.get_origin(origin)) {
-            // a small margin to ensure we do move to the next takeoff
-            // stage
-            const int32_t margin_cm = 5;
-            float pos_z = margin_cm + plane.next_WP_loc.alt - origin.alt;
-            vel_z = 0;
-            pos_control->input_pos_vel_accel_z(pos_z, vel_z, 0);
+    if (tkoff_yaw_align_active && tkoff_yaw_enable > 0) {
+        // Altitude reached — hold current altitude while yaw aligns
+        set_climb_rate_cms(0);
+    } else {
+        float vel_z = wp_nav->get_default_speed_up();
+        if (plane.control_mode == &plane.mode_guided && guided_takeoff) {
+            // for guided takeoff we aim for a specific height with zero
+            // velocity at that height
+            Location origin;
+            if (ahrs.get_origin(origin)) {
+                // a small margin to ensure we do move to the next takeoff
+                // stage
+                const int32_t margin_cm = 5;
+                float pos_z = margin_cm + plane.next_WP_loc.alt - origin.alt;
+                vel_z = 0;
+                pos_control->input_pos_vel_accel_z(pos_z, vel_z, 0);
+            } else {
+                set_climb_rate_cms(vel_z);
+            }
         } else {
             set_climb_rate_cms(vel_z);
         }
-    } else {
-        set_climb_rate_cms(vel_z);
     }
 
     run_z_controller();
