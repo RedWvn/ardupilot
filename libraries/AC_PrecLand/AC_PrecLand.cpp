@@ -189,6 +189,22 @@ const AP_Param::GroupInfo AC_PrecLand::var_info[] = {
     // @RebootRequired: True
     AP_GROUPINFO_FRAME("ORIENT", 18, AC_PrecLand, _orient, AC_PRECLAND_ORIENT_DEFAULT, AP_PARAM_FRAME_ROVER),
 
+    // @Param: TGT_ID       
+    // @DisplayName: Precision landing target ID filter
+    // @Description: ID of desired landing target. -1 accepts any.
+    // @Range: -1 255
+    // @Increment: 1
+    // @User: Advanced
+    AP_GROUPINFO("TGT_ID", 19, AC_PrecLand, _target_id, -1),
+
+    // @Param: TGT_ID_BCKP       
+    // @DisplayName: Precision landing target ID filter backup
+    // @Description: ID of desired landing target. -1 accepts any.
+    // @Range: -1 255
+    // @Increment: 1
+    // @User: Advanced
+    AP_GROUPINFO("TGT_ID_BCKP", 20, AC_PrecLand, _target_id_bckp, -1),
+
     AP_GROUPEND
 };
 
