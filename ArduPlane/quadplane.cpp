@@ -562,9 +562,18 @@ const AP_Param::GroupInfo QuadPlane::var_info2[] = {
     // @User: Standard
     AP_GROUPINFO("TKOFF_YAW_EN", 40, QuadPlane, tkoff_yaw_enable, 1),
 
+    // @Param: TKOFF_YAW_RATE
+    // @DisplayName: Takeoff yaw alignment max rate
+    // @Description: Maximum yaw rate in deg/s while aligning heading to the next mission waypoint after VTOL takeoff. Limits Q_A_RATE_Y_MAX / Q_A_SLEW_YAW during the align phase only. Lower this if the aircraft overshoots or oscillates through the target heading in wind; raise if large heading changes take too long. Set 0 to use the normal attitude controller limits.
+    // @Units: deg/s
+    // @Range: 0 60
+    // @Increment: 1
+    // @User: Standard
+    AP_GROUPINFO("TKOFF_YAW_RATE", 42, QuadPlane, tkoff_yaw_rate, 20.0f),
+
     // @Param: TKOFF_YAW_DLY
     // @DisplayName: Takeoff yaw alignment settle delay
-    // @Description: Time in seconds to hold position after yaw alignment is complete (error within 5 deg) before starting the transition to fixed-wing flight. This allows the yaw rate to damp out before transitioning.
+    // @Description: Time in seconds to hold after heading is within 5 deg of target before transition. Timer resets if heading leaves the 5 deg window. Transition is also delayed until yaw rate has dropped (prevents starting transition while still swinging through the target). Values near 0 are not recommended in wind.
     // @Units: s
     // @Range: 0 5
     // @Increment: 0.1
@@ -3176,11 +3185,23 @@ void QuadPlane::takeoff_controller(void)
 
     set_pilot_yaw_rate_time_constant();
     if (tkoff_yaw_align_active && tkoff_yaw_target_cd >= 0) {
+        // Cap yaw rate during align so large heading changes do not overshoot
+        // through the 5 deg window (flight tests: Q_A_SLEW_YAW ~60 deg/s caused
+        // oscillation and premature transition).
+        const float saved_yaw_rate_max = attitude_control->get_ang_vel_yaw_max_degs();
+        if (is_positive(tkoff_yaw_rate)) {
+            const float limited = is_positive(saved_yaw_rate_max) ?
+                MIN(saved_yaw_rate_max, tkoff_yaw_rate.get()) : tkoff_yaw_rate.get();
+            attitude_control->set_ang_vel_yaw_max_degs(limited);
+        }
         attitude_control->input_euler_angle_roll_pitch_yaw(
             plane.nav_roll_cd,
             plane.nav_pitch_cd,
             tkoff_yaw_target_cd,
             true);
+        if (is_positive(tkoff_yaw_rate)) {
+            attitude_control->set_ang_vel_yaw_max_degs(saved_yaw_rate_max);
+        }
     } else {
         attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(
             plane.nav_roll_cd,
@@ -3189,7 +3210,16 @@ void QuadPlane::takeoff_controller(void)
     }
 
     if (tkoff_yaw_align_active) {
-        set_climb_rate_cms(0);
+        // Position-hold takeoff altitude (climb-rate 0 alone allows drift / overshoot
+        // after a fast climb — seen as continued ascent in flight tests).
+        Location origin;
+        if (ahrs.get_origin(origin)) {
+            float pos_z = plane.next_WP_loc.alt - origin.alt;
+            float vel_z = 0;
+            pos_control->input_pos_vel_accel_z(pos_z, vel_z, 0);
+        } else {
+            set_climb_rate_cms(0);
+        }
     } else {
         float vel_z = wp_nav->get_default_speed_up();
         if (plane.control_mode == &plane.mode_guided && guided_takeoff) {
@@ -3487,6 +3517,16 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
             }
             const uint32_t settle_ms = (uint32_t)(tkoff_yaw_delay * 1000.0f);
             if (now - tkoff_yaw_settle_start_ms < settle_ms) {
+                return false;
+            }
+
+            // Do not start transition while still swinging through the target.
+            // Flight logs showed RATE.Y of 40-60+ deg/s at "aligned" with short DLY,
+            // then heading drifted 10-20 deg after transition began.
+            const float yaw_rate_deg = degrees(fabsf(ahrs.get_gyro().z));
+            const float yaw_rate_lim = is_positive(tkoff_yaw_rate) ?
+                MAX(8.0f, tkoff_yaw_rate.get() * 0.4f) : 10.0f;
+            if (yaw_rate_deg > yaw_rate_lim) {
                 return false;
             }
         }

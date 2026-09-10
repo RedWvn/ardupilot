@@ -2629,6 +2629,384 @@ class AutoTestQuadPlane(vehicle_test_suite.TestSuite):
         self.zero_throttle()
         self.wait_disarmed(timeout=60)
 
+    def _takeoff_yaw_align_common_params(self, enable, delay_s, rate_degs=20):
+        '''shared params for QTAKEOFF yaw-align tests'''
+        self.set_parameters({
+            "Q_TKOFF_YAW_EN": enable,
+            "Q_TKOFF_YAW_DLY": delay_s,
+            "Q_TKOFF_YAW_RATE": rate_degs,
+            "Q_WVANE_ENABLE": 0,
+            "STICK_MIXING": 0,
+        })
+        self.set_message_rate_hz(mavutil.mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE, 10)
+
+    def _takeoff_yaw_align_arm_auto(self):
+        self.change_mode('AUTO')
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+
+    def _takeoff_yaw_align_qland(self):
+        self.change_mode('QLAND')
+        self.wait_disarmed(timeout=120)
+
+    def _statustext_seen(self, needle):
+        texts = [m.text for m in self.context_collection('STATUSTEXT')]
+        needle_l = needle.lower()
+        return any(needle_l in t.lower() for t in texts)
+
+    def _yaw_rate_deg(self, timeout=2):
+        '''absolute yaw rate in deg/s from ATTITUDE.yawspeed'''
+        m = self.assert_receive_message('ATTITUDE', timeout=timeout)
+        return abs(math.degrees(m.yawspeed))
+
+    def _assert_transition_heading_settled(self, want_heading, accuracy=5, rate_lim_degs=8.0):
+        '''Assert heading and yaw rate are settled at transition start (flight-test gate).'''
+        heading = self.get_heading()
+        yaw_rate = self._yaw_rate_deg()
+        err = self.heading_delta(heading, want_heading)
+        if err > accuracy:
+            raise NotAchievedException(
+                "Transition heading error %.1f deg (heading=%.1f want=%.1f +/-%g)" %
+                (err, heading, want_heading, accuracy))
+        if yaw_rate > rate_lim_degs + 2.0:
+            raise NotAchievedException(
+                "Transition yaw rate still high: %.1f deg/s (lim~%.1f) - premature transition" %
+                (yaw_rate, rate_lim_degs))
+        self.progress("Transition settled: heading=%.1f err=%.1f yaw_rate=%.1f" %
+                      (heading, err, yaw_rate))
+
+    def TakeoffYawAlignEnabled(self):
+        '''Q_TKOFF_YAW_EN=1: yaw to next WP bearing, settle, then transition'''
+        takeoff_alt = 30
+        # East waypoint forces ~90 deg yaw from typical near-north start heading
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_TAKEOFF, 0, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 400, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_LAND, 0, 0, 0),
+        ])
+        self._takeoff_yaw_align_common_params(enable=1, delay_s=1.5)
+        self.context_collect('STATUSTEXT')
+        self._takeoff_yaw_align_arm_auto()
+
+        self.wait_altitude(takeoff_alt - 2, takeoff_alt + 5, relative=True, timeout=90)
+
+        # Must still be multicopter while yawing / settling
+        self.assert_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_MC,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR)
+
+        self.wait_heading(90, accuracy=5, timeout=90)
+        self.wait_statustext('Takeoff yaw aligned, settling', check_context=True, timeout=30)
+
+        # Altitude hold during yaw-align: stay near takeoff altitude
+        alt = self.get_altitude(relative=True)
+        if abs(alt - takeoff_alt) > 5.0:
+            raise NotAchievedException(
+                "Altitude drifted during yaw align: got %.1fm want ~%um" % (alt, takeoff_alt))
+
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=60)
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=90)
+
+        self.wait_current_waypoint(3, timeout=120)
+        self._takeoff_yaw_align_qland()
+
+    def TakeoffYawAlignDisabled(self):
+        '''Q_TKOFF_YAW_EN=0: transition at altitude with no settle message'''
+        takeoff_alt = 30
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_TAKEOFF, 0, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 400, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_LAND, 0, 0, 0),
+        ])
+        self._takeoff_yaw_align_common_params(enable=0, delay_s=1.5)
+        self.context_collect('STATUSTEXT')
+        self._takeoff_yaw_align_arm_auto()
+
+        self.wait_altitude(takeoff_alt - 2, takeoff_alt + 5, relative=True, timeout=90)
+        t_at_alt = self.get_sim_time()
+
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=30)
+        dt = self.get_sim_time() - t_at_alt
+        if dt > 5.0:
+            raise NotAchievedException(
+                "Disabled yaw-align transition too slow: %.1fs after altitude" % dt)
+
+        if self._statustext_seen('Takeoff yaw aligned'):
+            raise NotAchievedException(
+                "Unexpected settle STATUSTEXT with Q_TKOFF_YAW_EN=0")
+
+        self._takeoff_yaw_align_qland()
+
+    def TakeoffYawAlignWest(self):
+        '''Enabled yaw align toward West (~270 deg) waypoint'''
+        takeoff_alt = 25
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_TAKEOFF, 0, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, -400, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_LAND, 0, 0, 0),
+        ])
+        self._takeoff_yaw_align_common_params(enable=1, delay_s=1.0)
+        self.context_collect('STATUSTEXT')
+        self._takeoff_yaw_align_arm_auto()
+
+        self.wait_altitude(takeoff_alt - 2, takeoff_alt + 5, relative=True, timeout=90)
+        self.wait_heading(270, accuracy=5, timeout=120)
+        self.wait_statustext('Takeoff yaw aligned, settling', check_context=True, timeout=30)
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=60)
+
+        self._takeoff_yaw_align_qland()
+
+    def TakeoffYawAlignAlreadyNearTarget(self):
+        '''Next WP nearly ahead of start heading - quick settle then transition'''
+        # Force home heading North so a North WP is already within ~5 deg
+        self.customise_SITL_commandline(
+            ["--home", "-27.274439,151.290064,343,0"]
+        )
+        takeoff_alt = 25
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_TAKEOFF, 0, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 400, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_LAND, 0, 0, 0),
+        ])
+        self._takeoff_yaw_align_common_params(enable=1, delay_s=1.0)
+        self.context_collect('STATUSTEXT')
+        self._takeoff_yaw_align_arm_auto()
+
+        self.wait_altitude(takeoff_alt - 2, takeoff_alt + 5, relative=True, timeout=90)
+        t_at_alt = self.get_sim_time()
+        self.wait_statustext('Takeoff yaw aligned, settling', check_context=True, timeout=30)
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=30)
+        dt = self.get_sim_time() - t_at_alt
+        # Already aligned: only settle delay (~1s) plus small margin
+        if dt > 8.0:
+            raise NotAchievedException(
+                "Already-aligned path too slow: %.1fs (expected settle-dominated)" % dt)
+
+        self._takeoff_yaw_align_qland()
+
+    def TakeoffYawAlignSettleDelay(self):
+        '''Q_TKOFF_YAW_DLY is honored after heading is within 5 deg'''
+        takeoff_alt = 25
+        delay_s = 3.0
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_TAKEOFF, 0, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 400, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_LAND, 0, 0, 0),
+        ])
+        self._takeoff_yaw_align_common_params(enable=1, delay_s=delay_s)
+        self.context_collect('STATUSTEXT')
+        self._takeoff_yaw_align_arm_auto()
+
+        self.wait_altitude(takeoff_alt - 2, takeoff_alt + 5, relative=True, timeout=90)
+        self.wait_heading(90, accuracy=5, timeout=90)
+        self.wait_statustext('Takeoff yaw aligned, settling', check_context=True, timeout=30)
+        t_settle = self.get_sim_time()
+
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=60)
+        dt = self.get_sim_time() - t_settle
+        if dt < delay_s - 0.3:
+            raise NotAchievedException(
+                "Settled too early: %.2fs < Q_TKOFF_YAW_DLY=%.1fs" % (dt, delay_s))
+        if dt > delay_s + 5.0:
+            raise NotAchievedException(
+                "Settled too late: %.2fs (delay=%.1fs)" % (dt, delay_s))
+
+        self._takeoff_yaw_align_qland()
+
+    def TakeoffYawAlignZeroDelay(self):
+        '''Q_TKOFF_YAW_DLY=0 still requires heading within 5 deg + rate gate before transition'''
+        takeoff_alt = 25
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_TAKEOFF, 0, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 400, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_LAND, 0, 0, 0),
+        ])
+        self._takeoff_yaw_align_common_params(enable=1, delay_s=0.0, rate_degs=20)
+        self.context_collect('STATUSTEXT')
+        self._takeoff_yaw_align_arm_auto()
+
+        self.wait_altitude(takeoff_alt - 2, takeoff_alt + 5, relative=True, timeout=90)
+        self.wait_heading(90, accuracy=5, timeout=90)
+        self.wait_statustext('Takeoff yaw aligned, settling', check_context=True, timeout=30)
+        t_settle = self.get_sim_time()
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=45)
+        # Rate gate may extend slightly past DLY=0; still should be prompt.
+        dt = self.get_sim_time() - t_settle
+        if dt > 8.0:
+            raise NotAchievedException(
+                "Zero-delay transition slow: %.2fs after settle text" % dt)
+
+        # Regression: must not transition while swinging through target (May 2026 fails)
+        self._assert_transition_heading_settled(90, accuracy=5, rate_lim_degs=8.0)
+
+        self._takeoff_yaw_align_qland()
+
+    def TakeoffYawAlignNoPrematureTransition(self):
+        '''Flight regression: high ATC slew + short DLY must not transition mid-overshoot'''
+        # Reproduces Fighter-D May 2026 setup that failed at 90/135/180 deg offsets:
+        # Q_A_SLEW_YAW~60 deg/s, Q_A_RATE_Y_MAX=45, short DLY. Fix: Q_TKOFF_YAW_RATE
+        # cap + yaw-rate gate so transition heading stays within 5 deg.
+        self.customise_SITL_commandline(
+            ["--home", "-27.274439,151.290064,343,0"]
+        )
+        takeoff_alt = 25
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_TAKEOFF, 0, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 400, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_LAND, 0, 0, 0),
+        ])
+        self._takeoff_yaw_align_common_params(enable=1, delay_s=0.25, rate_degs=20)
+        self.set_parameters({
+            "Q_A_SLEW_YAW": 6000,   # 60 deg/s (flight value)
+            "Q_A_RATE_Y_MAX": 45,  # flight value
+        })
+        self.context_collect('STATUSTEXT')
+        self._takeoff_yaw_align_arm_auto()
+
+        self.wait_altitude(takeoff_alt - 2, takeoff_alt + 5, relative=True, timeout=90)
+        alt_at_align = self.get_altitude(relative=True)
+
+        self.wait_heading(90, accuracy=8, timeout=120)
+        self.wait_statustext('Takeoff yaw aligned, settling', check_context=True, timeout=30)
+
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=90)
+
+        self._assert_transition_heading_settled(90, accuracy=5, rate_lim_degs=8.0)
+
+        alt_at_trans = self.get_altitude(relative=True)
+        if abs(alt_at_trans - takeoff_alt) > 5.0:
+            raise NotAchievedException(
+                "Altitude not held through align: %.1fm (takeoff %um, at_align %.1f)" %
+                (alt_at_trans, takeoff_alt, alt_at_align))
+        if alt_at_trans - alt_at_align > 3.0:
+            raise NotAchievedException(
+                "Continued climb during/after align: +%.1fm" % (alt_at_trans - alt_at_align))
+
+        self._takeoff_yaw_align_qland()
+
+    def TakeoffYawAlignNoNextNav(self):
+        '''No subsequent nav command - skip yaw align, transition at altitude'''
+        takeoff_alt = 25
+        # Mission ends after VTOL takeoff: get_next_nav_cmd fails, yaw target skipped.
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_TAKEOFF, 0, 0, takeoff_alt),
+        ])
+        self._takeoff_yaw_align_common_params(enable=1, delay_s=1.5)
+        self.context_collect('STATUSTEXT')
+        self._takeoff_yaw_align_arm_auto()
+
+        self.wait_altitude(takeoff_alt - 2, takeoff_alt + 5, relative=True, timeout=90)
+        t_at_alt = self.get_sim_time()
+
+        # Without a next nav bearing, firmware skips yaw and restarts transition
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=30)
+        dt = self.get_sim_time() - t_at_alt
+        if dt > 5.0:
+            raise NotAchievedException(
+                "No-next-nav skip path too slow: %.1fs" % dt)
+
+        if self._statustext_seen('Takeoff yaw aligned'):
+            raise NotAchievedException(
+                "Settle STATUSTEXT should not appear without next nav WP")
+
+        self._takeoff_yaw_align_qland()
+
+    def TakeoffYawAlignAltitudeHold(self):
+        '''During yaw align, climb rate is held (~0); altitude must not keep climbing'''
+        takeoff_alt = 30
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_TAKEOFF, 0, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 500, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_LAND, 0, 0, 0),
+        ])
+        # Long delay so we can sample altitude while holding
+        self._takeoff_yaw_align_common_params(enable=1, delay_s=4.0)
+        self.context_collect('STATUSTEXT')
+        self._takeoff_yaw_align_arm_auto()
+
+        self.wait_altitude(takeoff_alt - 2, takeoff_alt + 5, relative=True, timeout=90)
+        self.wait_heading(90, accuracy=8, timeout=90)
+        self.wait_statustext('Takeoff yaw aligned, settling', check_context=True, timeout=30)
+
+        samples = []
+        t_end = self.get_sim_time() + 2.5
+        while self.get_sim_time_cached() < t_end:
+            samples.append(self.get_altitude(relative=True))
+            self.delay_sim_time(0.25)
+
+        if not samples:
+            raise NotAchievedException("No altitude samples during settle")
+        alt_span = max(samples) - min(samples)
+        alt_mean = sum(samples) / len(samples)
+        if abs(alt_mean - takeoff_alt) > 4.0:
+            raise NotAchievedException(
+                "Mean alt during settle %.1fm far from takeoff %um" % (alt_mean, takeoff_alt))
+        if alt_span > 4.0:
+            raise NotAchievedException(
+                "Altitude not held during settle: span %.1fm samples=%s" % (alt_span, samples))
+        if max(samples) > takeoff_alt + 6.0:
+            raise NotAchievedException(
+                "Continued climb during yaw align: max %.1fm" % max(samples))
+
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=60)
+        self._takeoff_yaw_align_qland()
+
+    def TakeoffYawAlignOpposite(self):
+        '''~180 deg yaw from start heading before transition'''
+        self.customise_SITL_commandline(
+            ["--home", "-27.274439,151.290064,343,0"]
+        )
+        takeoff_alt = 25
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_TAKEOFF, 0, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, -400, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_LAND, 0, 0, 0),
+        ])
+        self._takeoff_yaw_align_common_params(enable=1, delay_s=1.0, rate_degs=20)
+        self.context_collect('STATUSTEXT')
+        self._takeoff_yaw_align_arm_auto()
+
+        self.wait_altitude(takeoff_alt - 2, takeoff_alt + 5, relative=True, timeout=90)
+        self.wait_heading(180, accuracy=5, timeout=180)
+        self.wait_statustext('Takeoff yaw aligned, settling', check_context=True, timeout=30)
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=60)
+        self._assert_transition_heading_settled(180, accuracy=5, rate_lim_degs=8.0)
+
+        self._takeoff_yaw_align_qland()
+
     def RudderArmingWithARMING_CHECK_THROTTLEUnset(self) -> None:
         '''check arming behaviour with ARMING_CHECK_THROTTLE unset'''
         self.wait_ready_to_arm()
@@ -2930,5 +3308,15 @@ class AutoTestQuadPlane(vehicle_test_suite.TestSuite):
             self.CruiseRecovery,
             self.TerrainAvoidApplet,
             self.ScriptedArmingChecksApplet,
+            self.TakeoffYawAlignEnabled,
+            self.TakeoffYawAlignDisabled,
+            self.TakeoffYawAlignWest,
+            self.TakeoffYawAlignAlreadyNearTarget,
+            self.TakeoffYawAlignSettleDelay,
+            self.TakeoffYawAlignZeroDelay,
+            self.TakeoffYawAlignNoPrematureTransition,
+            self.TakeoffYawAlignNoNextNav,
+            self.TakeoffYawAlignAltitudeHold,
+            self.TakeoffYawAlignOpposite,
         ])
         return ret

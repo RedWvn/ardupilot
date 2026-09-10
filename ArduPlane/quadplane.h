@@ -634,6 +634,7 @@ private:
     uint32_t tkoff_yaw_settle_start_ms;  // millis when heading first within 5 deg (0 = not yet)
 
     AP_Int8  tkoff_yaw_enable;           // Q_TKOFF_YAW_EN
+    AP_Float tkoff_yaw_rate;             // Q_TKOFF_YAW_RATE (deg/s slew cap during align)
     AP_Float tkoff_yaw_delay;            // Q_TKOFF_YAW_DLY
 
     // oneshot with duration ARMING_DELAY_MS used by quadplane to delay spoolup after arming:
