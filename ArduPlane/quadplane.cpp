@@ -554,7 +554,23 @@ const AP_Param::GroupInfo QuadPlane::var_info2[] = {
     // @Increment: 1
     // @User: Standard
     AP_GROUPINFO("APPROACH_DIST", 39, QuadPlane, approach_distance, 0),
-    
+
+    // @Param: TKOFF_YAW_EN
+    // @DisplayName: Takeoff yaw alignment enable
+    // @Description: When enabled, the aircraft will yaw to align with the first mission waypoint bearing after reaching takeoff altitude, before initiating the VTOL-to-fixed-wing transition. Set to 0 to disable and transition immediately on altitude.
+    // @Values: 0:Disabled,1:Enabled
+    // @User: Standard
+    AP_GROUPINFO("TKOFF_YAW_EN", 40, QuadPlane, tkoff_yaw_enable, 1),
+
+    // @Param: TKOFF_YAW_DLY
+    // @DisplayName: Takeoff yaw alignment settle delay
+    // @Description: Time in seconds to hold position after yaw alignment is complete (error within 5 deg) before starting the transition to fixed-wing flight. This allows the yaw rate to damp out before transitioning.
+    // @Units: s
+    // @Range: 0 5
+    // @Increment: 0.1
+    // @User: Standard
+    AP_GROUPINFO("TKOFF_YAW_DLY", 41, QuadPlane, tkoff_yaw_delay, 1.5f),
+
     AP_GROUPEND
 };
 
@@ -3159,27 +3175,40 @@ void QuadPlane::takeoff_controller(void)
     run_xy_controller();
 
     set_pilot_yaw_rate_time_constant();
-    attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(plane.nav_roll_cd,
-                                                                  plane.nav_pitch_cd,
-                                                                  get_pilot_input_yaw_rate_cds() + get_weathervane_yaw_rate_cds());
+    if (tkoff_yaw_align_active && tkoff_yaw_target_cd >= 0) {
+        attitude_control->input_euler_angle_roll_pitch_yaw(
+            plane.nav_roll_cd,
+            plane.nav_pitch_cd,
+            tkoff_yaw_target_cd,
+            true);
+    } else {
+        attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(
+            plane.nav_roll_cd,
+            plane.nav_pitch_cd,
+            get_pilot_input_yaw_rate_cds() + get_weathervane_yaw_rate_cds());
+    }
 
-    float vel_z = wp_nav->get_default_speed_up();
-    if (plane.control_mode == &plane.mode_guided && guided_takeoff) {
-        // for guided takeoff we aim for a specific height with zero
-        // velocity at that height
-        Location origin;
-        if (ahrs.get_origin(origin)) {
-            // a small margin to ensure we do move to the next takeoff
-            // stage
-            const int32_t margin_cm = 5;
-            float pos_z = margin_cm + plane.next_WP_loc.alt - origin.alt;
-            vel_z = 0;
-            pos_control->input_pos_vel_accel_z(pos_z, vel_z, 0);
+    if (tkoff_yaw_align_active) {
+        set_climb_rate_cms(0);
+    } else {
+        float vel_z = wp_nav->get_default_speed_up();
+        if (plane.control_mode == &plane.mode_guided && guided_takeoff) {
+            // for guided takeoff we aim for a specific height with zero
+            // velocity at that height
+            Location origin;
+            if (ahrs.get_origin(origin)) {
+                // a small margin to ensure we do move to the next takeoff
+                // stage
+                const int32_t margin_cm = 5;
+                float pos_z = margin_cm + plane.next_WP_loc.alt - origin.alt;
+                vel_z = 0;
+                pos_control->input_pos_vel_accel_z(pos_z, vel_z, 0);
+            } else {
+                set_climb_rate_cms(vel_z);
+            }
         } else {
             set_climb_rate_cms(vel_z);
         }
-    } else {
-        set_climb_rate_cms(vel_z);
     }
 
     run_z_controller();
@@ -3320,6 +3349,9 @@ bool QuadPlane::do_vtol_takeoff(const AP_Mission::Mission_Command& cmd)
                                      Location::AltFrame::ABSOLUTE);
     }
     throttle_wait = false;
+    tkoff_yaw_align_active = false;
+    tkoff_yaw_target_cd = -1;
+    tkoff_yaw_settle_start_ms = 0;
 
     // set vertical speed and acceleration limits
     pos_control->set_max_speed_accel_z(-get_pilot_velocity_z_max_dn(), pilot_speed_z_max_up*100, pilot_accel_z*100);
@@ -3429,6 +3461,37 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
     if (plane.current_loc.alt < plane.next_WP_loc.alt) {
         return false;
     }
+
+    if (tkoff_yaw_enable > 0) {
+        if (!tkoff_yaw_align_active) {
+            AP_Mission::Mission_Command next_nav_cmd;
+            if (plane.control_mode == &plane.mode_auto && ahrs.healthy() &&
+                plane.mission.get_next_nav_cmd(plane.mission.get_current_nav_index() + 1, next_nav_cmd)) {
+                tkoff_yaw_target_cd = plane.current_loc.get_bearing_to(next_nav_cmd.content.location);
+            } else {
+                tkoff_yaw_target_cd = -1;
+            }
+            tkoff_yaw_align_active = true;
+        }
+
+        if (tkoff_yaw_target_cd >= 0) {
+            const float yaw_error_deg = fabsf(wrap_180_cd(tkoff_yaw_target_cd - ahrs.yaw_sensor)) * 0.01f;
+            if (yaw_error_deg > 5.0f) {
+                tkoff_yaw_settle_start_ms = 0;
+                return false;
+            }
+
+            if (tkoff_yaw_settle_start_ms == 0) {
+                tkoff_yaw_settle_start_ms = now;
+                gcs().send_text(MAV_SEVERITY_INFO, "Takeoff yaw aligned, settling %.1fs", (double)tkoff_yaw_delay);
+            }
+            const uint32_t settle_ms = (uint32_t)(tkoff_yaw_delay * 1000.0f);
+            if (now - tkoff_yaw_settle_start_ms < settle_ms) {
+                return false;
+            }
+        }
+    }
+
     transition->restart();
     plane.TECS_controller.set_pitch_max(transition_pitch_max);
     plane.TECS_controller.set_pitch_min(-transition_pitch_max);
