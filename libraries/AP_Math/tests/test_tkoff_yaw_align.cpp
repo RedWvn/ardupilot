@@ -5,9 +5,11 @@
 const AP_HAL::HAL& hal = AP_HAL::get_HAL();
 
 /*
-  Mirrors QuadPlane::verify_vtol_takeoff() yaw-align predicates:
+  Mirrors QuadPlane QTAKEOFF yaw-align predicates:
     heading: fabsf(wrap_180_cd(target_cd - yaw_cd)) * 0.01f <= 5.0f
     rate:    yaw_rate_deg <= max(8, 0.4 * Q_TKOFF_YAW_RATE)   (RATE<=0 => 10)
+    settle:  heading OK AND rate OK before settle timer starts
+    approach: min(RATE, max(gate, error_deg))
 */
 static float yaw_error_deg(int32_t target_cd, int32_t yaw_cd)
 {
@@ -27,6 +29,16 @@ static float yaw_rate_gate_degs(float tkoff_yaw_rate_degs)
     return 10.0f;
 }
 
+static float approach_rate_degs(float yaw_error_deg, float tkoff_yaw_rate_degs)
+{
+    if (!(tkoff_yaw_rate_degs > 0.0f)) {
+        return 0.0f;
+    }
+    const float gate = yaw_rate_gate_degs(tkoff_yaw_rate_degs);
+    return MIN(tkoff_yaw_rate_degs, MAX(gate, yaw_error_deg));
+}
+
+// Settle timer may start / continue only when heading and rate are both OK.
 static bool settle_ready(int32_t target_cd, int32_t yaw_cd, float yaw_rate_deg,
                          float tkoff_yaw_rate_degs, float tol_deg = 5.0f)
 {
@@ -128,12 +140,25 @@ TEST(TkoffYawAlign, PrematureTransitionBlocked)
     const int32_t yaw_cd = 28390;    // within 5 deg
     EXPECT_TRUE(yaw_within_tol(target_cd, yaw_cd));
 
-    // Old behaviour (heading-only) would allow transition; rate gate must block.
+    // Heading-only settle would start the timer; rate gate must block.
     EXPECT_FALSE(settle_ready(target_cd, yaw_cd, 50.0f, 20.0f));
     EXPECT_FALSE(settle_ready(target_cd, yaw_cd, 62.0f, 20.0f));
 
-    // After rate damps below gate (8 deg/s for RATE=20), allow transition.
+    // After rate damps below gate (8 deg/s for RATE=20), allow settle/transition.
     EXPECT_TRUE(settle_ready(target_cd, yaw_cd, 7.0f, 20.0f));
+}
+
+TEST(TkoffYawAlign, Sep29HighRateInWindowBlocksSettle)
+{
+    // Sep 2026 FAIL logs: heading ~5 deg, RATE.Y 17-27 deg/s at "aligned".
+    // Settle timer must NOT start until rate <= gate (8 for RATE=20).
+    const int32_t target_cd = 21000;
+    const int32_t yaw_cd = 20500; // 5 deg error
+    EXPECT_TRUE(yaw_within_tol(target_cd, yaw_cd));
+
+    EXPECT_FALSE(settle_ready(target_cd, yaw_cd, 17.0f, 20.0f));
+    EXPECT_FALSE(settle_ready(target_cd, yaw_cd, 27.0f, 20.0f));
+    EXPECT_TRUE(settle_ready(target_cd, yaw_cd, 7.5f, 20.0f));
 }
 
 TEST(TkoffYawAlign, OvershootLeavesWindow)
@@ -150,6 +175,35 @@ TEST(TkoffYawAlign, HighRateOppositeSwing)
     // 180 deg case: heading not yet aligned and rate very high (log peak 133 deg/s)
     EXPECT_FALSE(settle_ready(28100, 19890, 133.0f, 20.0f));
     EXPECT_FALSE(settle_ready(28100, 31990, 40.0f, 20.0f));
+}
+
+TEST(TkoffYawAlign, ApproachRateDecelerates)
+{
+    const float rate = 20.0f;
+    // Far from target: full RATE
+    EXPECT_FLOAT_EQ(20.0f, approach_rate_degs(180.0f, rate));
+    EXPECT_FLOAT_EQ(20.0f, approach_rate_degs(50.0f, rate));
+    EXPECT_FLOAT_EQ(20.0f, approach_rate_degs(20.0f, rate));
+
+    // Inside RATE but above gate: proportional to remaining error (k=1)
+    EXPECT_FLOAT_EQ(15.0f, approach_rate_degs(15.0f, rate));
+    EXPECT_FLOAT_EQ(10.0f, approach_rate_degs(10.0f, rate));
+
+    // Near target: floor at rate gate (8 for RATE=20)
+    EXPECT_FLOAT_EQ(8.0f, approach_rate_degs(5.0f, rate));
+    EXPECT_FLOAT_EQ(8.0f, approach_rate_degs(2.0f, rate));
+    EXPECT_FLOAT_EQ(8.0f, approach_rate_degs(0.0f, rate));
+
+    // RATE=0 -> approach disabled (use ATC limits path)
+    EXPECT_FLOAT_EQ(0.0f, approach_rate_degs(90.0f, 0.0f));
+}
+
+TEST(TkoffYawAlign, ApproachRateHighRateParam)
+{
+    // RATE=50 -> gate=20; at 30 deg error approach=min(50,max(20,30))=30
+    EXPECT_FLOAT_EQ(30.0f, approach_rate_degs(30.0f, 50.0f));
+    EXPECT_FLOAT_EQ(50.0f, approach_rate_degs(90.0f, 50.0f));
+    EXPECT_FLOAT_EQ(20.0f, approach_rate_degs(10.0f, 50.0f)); // floored at gate
 }
 
 AP_GTEST_MAIN()

@@ -3185,13 +3185,15 @@ void QuadPlane::takeoff_controller(void)
 
     set_pilot_yaw_rate_time_constant();
     if (tkoff_yaw_align_active && tkoff_yaw_target_cd >= 0) {
-        // Cap yaw rate during align so large heading changes do not overshoot
-        // through the 5 deg window (flight tests: Q_A_SLEW_YAW ~60 deg/s caused
-        // oscillation and premature transition).
+        // Cap yaw rate during align, and decelerate into the target so we do not
+        // arrive at full Q_TKOFF_YAW_RATE into the ±5 deg window (Sep 2026 180 deg
+        // overshoots of 80-110 deg after a false "aligned" at 17-27 deg/s).
         const float saved_yaw_rate_max = attitude_control->get_ang_vel_yaw_max_degs();
         if (is_positive(tkoff_yaw_rate)) {
+            const float yaw_error_deg = fabsf(wrap_180_cd(tkoff_yaw_target_cd - ahrs.yaw_sensor)) * 0.01f;
+            const float approach_lim = tkoff_yaw_approach_rate_degs(yaw_error_deg);
             const float limited = is_positive(saved_yaw_rate_max) ?
-                MIN(saved_yaw_rate_max, tkoff_yaw_rate.get()) : tkoff_yaw_rate.get();
+                MIN(saved_yaw_rate_max, approach_lim) : approach_lim;
             attitude_control->set_ang_vel_yaw_max_degs(limited);
         }
         attitude_control->input_euler_angle_roll_pitch_yaw(
@@ -3452,6 +3454,33 @@ bool QuadPlane::do_vtol_land(const AP_Mission::Mission_Command& cmd)
 }
 
 /*
+  Yaw-rate gate used before settle timer starts and before transition.
+  Matches unit-test yaw_rate_gate_degs().
+ */
+float QuadPlane::tkoff_yaw_rate_gate_degs() const
+{
+    if (is_positive(tkoff_yaw_rate)) {
+        return MAX(8.0f, tkoff_yaw_rate.get() * 0.4f);
+    }
+    return 10.0f;
+}
+
+/*
+  Approach-limited yaw rate during align: decelerate as remaining heading
+  error shrinks so we do not enter the ±5 deg window at full RATE.
+  cmd = min(RATE, max(gate, error_deg))  (k=1)
+ */
+float QuadPlane::tkoff_yaw_approach_rate_degs(float yaw_error_deg) const
+{
+    if (!is_positive(tkoff_yaw_rate)) {
+        return 0.0f;
+    }
+    const float gate = tkoff_yaw_rate_gate_degs();
+    const float approach = MAX(gate, yaw_error_deg);
+    return MIN(tkoff_yaw_rate.get(), approach);
+}
+
+/*
   check if a VTOL takeoff has completed
  */
 bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
@@ -3505,8 +3534,13 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
         }
 
         if (tkoff_yaw_target_cd >= 0) {
+            // Settle timer starts only when heading AND yaw rate are both OK.
+            // Heading-only settle (May/Sep 2026) printed "aligned" at 17-60+ deg/s,
+            // then overshot the ±5 deg window and never transitioned.
             const float yaw_error_deg = fabsf(wrap_180_cd(tkoff_yaw_target_cd - ahrs.yaw_sensor)) * 0.01f;
-            if (yaw_error_deg > 5.0f) {
+            const float yaw_rate_deg = degrees(fabsf(ahrs.get_gyro().z));
+            const float yaw_rate_lim = tkoff_yaw_rate_gate_degs();
+            if (yaw_error_deg > 5.0f || yaw_rate_deg > yaw_rate_lim) {
                 tkoff_yaw_settle_start_ms = 0;
                 return false;
             }
@@ -3517,16 +3551,6 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
             }
             const uint32_t settle_ms = (uint32_t)(tkoff_yaw_delay * 1000.0f);
             if (now - tkoff_yaw_settle_start_ms < settle_ms) {
-                return false;
-            }
-
-            // Do not start transition while still swinging through the target.
-            // Flight logs showed RATE.Y of 40-60+ deg/s at "aligned" with short DLY,
-            // then heading drifted 10-20 deg after transition began.
-            const float yaw_rate_deg = degrees(fabsf(ahrs.get_gyro().z));
-            const float yaw_rate_lim = is_positive(tkoff_yaw_rate) ?
-                MAX(8.0f, tkoff_yaw_rate.get() * 0.4f) : 10.0f;
-            if (yaw_rate_deg > yaw_rate_lim) {
                 return false;
             }
         }

@@ -3007,6 +3007,64 @@ class AutoTestQuadPlane(vehicle_test_suite.TestSuite):
 
         self._takeoff_yaw_align_qland()
 
+    def TakeoffYawAlignNoOvershoot180(self):
+        '''Sep 2026 regression: 180 deg + aggressive ATC must not overshoot past capture.
+
+        Flight fails entered +/-5 deg at 17-27 deg/s, printed settle, then blew
+        through by 80-110 deg and never re-captured. Fix: rate-before-settle +
+        approach deceleration. Assert settle text implies low rate, and heading
+        stays captured through transition.
+        '''
+        self.customise_SITL_commandline(
+            ["--home", "-27.274439,151.290064,343,0"]
+        )
+        takeoff_alt = 25
+        want_heading = 180
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_TAKEOFF, 0, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, -400, 0, takeoff_alt),
+            (mavutil.mavlink.MAV_CMD_NAV_VTOL_LAND, 0, 0, 0),
+        ])
+        self._takeoff_yaw_align_common_params(enable=1, delay_s=1.0, rate_degs=20)
+        self.set_parameters({
+            "Q_A_SLEW_YAW": 6000,   # 60 deg/s (field value)
+            "Q_A_RATE_Y_MAX": 45,
+        })
+        self.context_collect('STATUSTEXT')
+        self._takeoff_yaw_align_arm_auto()
+
+        self.wait_altitude(takeoff_alt - 2, takeoff_alt + 5, relative=True, timeout=90)
+        self.wait_heading(want_heading, accuracy=8, timeout=180)
+        self.wait_statustext('Takeoff yaw aligned, settling', check_context=True, timeout=60)
+
+        # Rate-before-settle: "aligned" must not fire while still swinging hard
+        yaw_rate = self._yaw_rate_deg()
+        if yaw_rate > 10.0:
+            raise NotAchievedException(
+                "Settle text at high yaw rate %.1f deg/s (Sep29 failure mode)" % yaw_rate)
+
+        # Sample heading after settle — must not blow through like 80-110 deg overshoots
+        max_err = 0.0
+        t_end = self.get_sim_time() + 3.0
+        while self.get_sim_time_cached() < t_end:
+            err = self.heading_delta(self.get_heading(), want_heading)
+            if err > max_err:
+                max_err = err
+            self.delay_sim_time(0.2)
+        if max_err > 25.0:
+            raise NotAchievedException(
+                "Post-settle overshoot too large: max err %.1f deg (Sep29 had 80-110)" %
+                max_err)
+        self.progress("Post-settle max heading err %.1f deg (ok)" % max_err)
+
+        self.wait_extended_sys_state(
+            mavutil.mavlink.MAV_VTOL_STATE_TRANSITION_TO_FW,
+            mavutil.mavlink.MAV_LANDED_STATE_IN_AIR,
+            timeout=90)
+        self._assert_transition_heading_settled(want_heading, accuracy=5, rate_lim_degs=8.0)
+
+        self._takeoff_yaw_align_qland()
+
     def RudderArmingWithARMING_CHECK_THROTTLEUnset(self) -> None:
         '''check arming behaviour with ARMING_CHECK_THROTTLE unset'''
         self.wait_ready_to_arm()
@@ -3318,5 +3376,6 @@ class AutoTestQuadPlane(vehicle_test_suite.TestSuite):
             self.TakeoffYawAlignNoNextNav,
             self.TakeoffYawAlignAltitudeHold,
             self.TakeoffYawAlignOpposite,
+            self.TakeoffYawAlignNoOvershoot180,
         ])
         return ret
