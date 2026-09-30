@@ -629,6 +629,18 @@ private:
     AP_Float takeoff_navalt_min;
     uint32_t takeoff_last_run_ms;
     float takeoff_start_alt;
+    int32_t tkoff_yaw_target_cd;         // bearing to next nav WP (centideg), -1 if skipped
+    bool tkoff_yaw_align_active;         // true after takeoff alt reached and yaw align started
+    uint32_t tkoff_yaw_settle_start_ms;  // millis when heading+rate first settled (0 = not yet)
+
+    AP_Int8  tkoff_yaw_enable;           // Q_TKOFF_YAW_EN
+    AP_Float tkoff_yaw_rate;             // Q_TKOFF_YAW_RATE (deg/s slew cap during align)
+    AP_Float tkoff_yaw_delay;            // Q_TKOFF_YAW_DLY
+
+    // Rate gate for settle/transition: max(8, 0.4*RATE); RATE<=0 => 10
+    float tkoff_yaw_rate_gate_degs() const;
+    // Approach-limited yaw rate: min(RATE, max(gate, error_deg)) — decelerates into target
+    float tkoff_yaw_approach_rate_degs(float yaw_error_deg) const;
 
     // oneshot with duration ARMING_DELAY_MS used by quadplane to delay spoolup after arming:
     // ignored unless OPTION_DELAY_ARMING or OPTION_TILT_DISARMED is set
